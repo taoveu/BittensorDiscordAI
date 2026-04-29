@@ -1,0 +1,31 @@
+# ── Environnement Python ──────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Variables d'environnement (credentials) ───────────────────────────────────
+.env
+# .env.example est volontairement inclus (pas de credentials)
+
+# ── Base de données SQLite ────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+
+# ── Données scrapées ──────────────────────────────────────────────────────────
+imports/
+
+# ── Système ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Build / dist ──────────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/

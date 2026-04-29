@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+SQLAlchemy
+watchdog
+python-dotenv
+jinja2
+openai
+apscheduler

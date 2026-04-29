@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <!-- Breadcrumb & Header -->
+    <div class="mb-8">
+        <a href="/"
+            class="inline-flex items-center text-sm font-medium text-slate-400 hover:text-white transition-colors mb-4 bg-white/5 px-3 py-1.5 rounded-full min-touch">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18">
+                </path>
+            </svg>
+            Retour au Cockpit
+        </a>
+
+        <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mt-2">
+            <div>
+                <h1 class="text-4xl font-extrabold text-white tracking-tight break-all">{{ view_name }}</h1>
+                <p class="text-sm text-slate-400 mt-2 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Dernière analyse : <span class="text-white font-mono">{{ analysis.created_at.strftime('%H:%M:%S - %d
+                        %b %Y') if analysis else 'Aucune' }}</span>
+                </p>
+                <p class="text-sm text-slate-400 mt-1 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    Dernier message : <span class="text-white font-mono">{{ last_message_at.timestamp.strftime('%H:%M:%S - %d %b %Y') if last_message_at else 'Non disponible' }}</span>{% if last_message_at %}<span class="text-slate-400 ml-2">— {{ last_message_at.author }}</span>{% endif %}
+                </p>
+                {% if analysis %}
+                <div class="mt-4 flex flex-wrap gap-3">
+                    <div
+                        class="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5 text-sm font-medium text-blue-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
+                            </path>
+                        </svg>
+                        <span>{{ analysis.message_count }} Messages analysés</span>
+                    </div>
+                    <div
+                        class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-1.5 text-sm font-medium text-emerald-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z">
+                            </path>
+                        </svg>
+                        <span>{{ analysis.author_count }} Contributeurs différents</span>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if analysis %}
+            {% set score = analysis.sentiment_score %}
+            {% if score >= 0.3 %}
+            {% set color = 'emerald' %}
+            {% set label = 'Bullish' %}
+            {% elif score <= -0.3 %} {% set color='red' %} {% set label='Alert' %} {% else %} {% set color='amber' %} {%
+                set label='Neutral' %} {% endif %} <div
+                class="glass-card px-5 py-3 flex items-center justify-between space-x-4 self-start">
+                <div class="flex flex-col">
+                    <span class="text-xs text-slate-400 uppercase tracking-widest font-bold">Sentiment / Peur</span>
+                    <span class="text-lg font-bold text-{{ color }}-400">{{ label }} ({{ fear_index }}/100)</span>
+                </div>
+                <div class="w-4 h-4 rounded-full bg-{{ color }}-500 glow-{{ color }}"></div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if analysis %}
+<!-- Analysis Content -->
+<div class="space-y-6">
+    <!-- Executive Synthesis -->
+    <div class="glass-card p-6 md:p-8">
+        <div class="flex items-center mb-4">
+            <div class="p-2 bg-blue-500/20 rounded-lg mr-3">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+            </div>
+            <h2 class="text-xl font-bold text-white">Synthèse Executive</h2>
+        </div>
+        <p class="text-slate-300 leading-relaxed text-lg">
+            {{ analysis.executive_synthesis }}
+        </p>
+    </div>
+
+    <!-- Critical Points -->
+    <div class="glass-card p-6 md:p-8">
+        <div class="flex items-center mb-6">
+            <div class="p-2 bg-purple-500/20 rounded-lg mr-3">
+                <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">
+                    </path>
+                </svg>
+            </div>
+            <h2 class="text-xl font-bold text-white">Points Techniques Critiques</h2>
+        </div>
+
+        <ul class="space-y-4">
+            {% for point in analysis.critical_points %}
+            <li class="flex items-start bg-white/5 p-4 rounded-xl border border-white/5 shadow-sm">
+                <span
+                    class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-purple-500/20 text-purple-300 font-bold text-sm mr-4 mt-0.5">
+                    {{ loop.index }}
+                </span>
+                <p class="text-sm text-slate-200 leading-relaxed">{{ point }}</p>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% else %}
+<div class="glass-card p-10 text-center">
+    <p class="text-slate-400">Aucune analyse détaillée disponible pour ce subnet.</p>
+</div>
+{% endif %}
+
+<!-- Actions -->
+<div class="mt-8 mb-12">
+    <a href="{{ subnet.discord_url }}" target="_blank" rel="noopener noreferrer"
+        class="min-touch flex items-center justify-center w-full py-4 px-6 bg-[#5865F2] hover:bg-[#4752C4] text-white rounded-2xl font-bold text-lg shadow-[0_0_20px_rgba(88,101,242,0.4)] transition-all active:scale-[0.98]">
+        <svg class="w-6 h-6 mr-3" fill="currentColor" viewBox="0 0 24 24">
+            <path
+                d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" />
+        </svg>
+        Ouvrir Discord
+    </a>
+    <p class="text-center text-xs text-slate-500 mt-3">Rejoindre la discussion pour plus de détails en direct.</p>
+</div>
+</div>
+{% endblock %}
