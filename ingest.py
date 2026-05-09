@@ -1,5 +1,6 @@
 import time
 import json
+import re
 import os
 import threading
 from watchdog.observers import Observer
@@ -12,6 +13,22 @@ from datetime import datetime
 from ai_agent import analyze_discord_exchanges
 
 IMPORTS_DIR = "./imports"
+CHANNELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "channels.json")
+
+
+def get_channel_names() -> dict:
+    """Parse channels.json (source of truth) and return {channel_id: label}."""
+    try:
+        with open(CHANNELS_FILE, 'r', encoding='utf-8') as f:
+            raw = f.read()
+        # Strip JS-style // comments
+        cleaned = re.sub(r'//[^\n]*', '', raw)
+        return json.loads(cleaned)
+    except Exception as e:
+        print(f"⚠️  Could not load channels.json: {e}")
+        return {}
+
+
 
 class JsonHandler(FileSystemEventHandler):
     def __init__(self):
@@ -93,14 +110,22 @@ class JsonHandler(FileSystemEventHandler):
             return
 
         try:
-            
             # Support DiscordChatExporter format or explicit URL
             guild_id = data.get("guild", {}).get("id")
             channel_id = data.get("channel", {}).get("id")
             channel_name = data.get("channel", {}).get("name")
-            
-            subnet_name = data.get("subnet_name") or channel_name or os.path.basename(filepath).replace(".json", "")
-            
+
+            # Resolve subnet name: prefer explicit > DCE channel name > channels.json lookup > filename
+            raw_fallback = os.path.basename(filepath).replace(".json", "")
+            subnet_name = data.get("subnet_name") or channel_name
+
+            if not subnet_name or subnet_name.isdigit():
+                # Fallback is a numeric channel ID — look up the human-readable label
+                lookup_id = channel_id or raw_fallback
+                channel_mappings = get_channel_names()
+                subnet_name = channel_mappings.get(str(lookup_id), raw_fallback)
+
+
             if "discord_url" in data:
                 discord_url = data["discord_url"]
             elif guild_id and channel_id:
@@ -111,18 +136,32 @@ class JsonHandler(FileSystemEventHandler):
             # Save to DB and manage Message Cache
             db = SessionLocal()
             try:
-                # 1. Find or create Subnet first to get the ID
+                # 1. Find or create Subnet
+                # Priority: exact discord_url match → name match (channel renamed) → create new
                 subnet = db.query(Subnet).filter(Subnet.discord_url == discord_url).first()
                 if not subnet:
-                    subnet = Subnet(name=subnet_name, discord_url=discord_url)
-                    db.add(subnet)
-                    db.commit()
-                    db.refresh(subnet)
+                    # Check if a subnet with the same name already exists (channel was renamed)
+                    # In that case, update its discord_url instead of creating a duplicate
+                    subnet_by_name = db.query(Subnet).filter(Subnet.name == subnet_name).first()
+                    if subnet_by_name:
+                        print(f"  ℹ️ Subnet '{subnet_name}' exists with different URL. "
+                              f"Old file for renamed channel — skipping to avoid conflict.")
+                        return  # Old file for a channel that has since moved; skip silently
+                    try:
+                        subnet = Subnet(name=subnet_name, discord_url=discord_url)
+                        db.add(subnet)
+                        db.commit()
+                        db.refresh(subnet)
+                    except Exception as create_err:
+                        db.rollback()
+                        print(f"  ⚠️ Could not create subnet '{subnet_name}': {create_err} — skipping file.")
+                        return
                 else:
-                    # Update name if the filename changed so we have the most recent readable reference
+                    # Update name if the Discord channel was renamed
                     if subnet.name != subnet_name:
                         subnet.name = subnet_name
                         db.commit()
+
 
                 # 2. Persist new Messages to Cache
                 # Insert ALL messages (even media-only) for delta tracking and last_message_at.
@@ -269,7 +308,98 @@ class JsonHandler(FileSystemEventHandler):
         except Exception as e:
             print(f"Error processing file {filepath}: {e}")
 
+def sync_channels_to_db():
+    """
+    Synchronise la base de données avec channels.json (source de vérité).
+
+    Pour chaque entrée de channels.json, on extrait le numéro de subnet et on
+    compare avec la DB. Si le channel_id ou le nom a changé, on met à jour la DB
+    et on supprime le vieux fichier JSON de cache pour forcer un nouveau scrape.
+
+    Clé de correspondance stable : le numéro de subnet (ex: 82, 102…)
+    """
+    import re
+
+    channel_mappings = get_channel_names()   # {channel_id: "label - subnet N"}
+    guild_id = "799672011265015819"
+
+    # Index channels.json par numéro de subnet → (new_channel_id, new_label)
+    channels_by_sn: dict[int, tuple[str, str]] = {}
+    for cid, label in channel_mappings.items():
+        m = re.search(r'\bsubnet\s+(\d+)\b', label, re.IGNORECASE)
+        if m:
+            channels_by_sn[int(m.group(1))] = (cid, label)
+
+    db = SessionLocal()
+    updated = 0
+    try:
+        subnets = db.query(Subnet).all()
+        for subnet in subnets:
+            if not subnet.discord_url:
+                continue
+
+            db_channel_id = subnet.discord_url.rstrip('/').split('/')[-1]
+
+            # Extract subnet number from DB name (handles ・82, ・ex66, etc.)
+            m = re.search(r'(?:ex)?(\d+)\s*$', subnet.name)
+            if not m:
+                continue
+            sn = int(m.group(1))
+
+            if sn not in channels_by_sn:
+                continue  # Subnet not configured in channels.json — skip
+
+            new_cid, new_label = channels_by_sn[sn]
+            new_url = f"https://discord.com/channels/{guild_id}/{new_cid}"
+
+            # Check for name conflict BEFORE making any changes
+            if subnet.name != new_label:
+                conflicting_subnet = db.query(Subnet).filter(Subnet.name == new_label).first()
+                if conflicting_subnet and conflicting_subnet.id != subnet.id:
+                    print(f"  ⚠️ Conflict: Subnet '{new_label}' already exists (ID {conflicting_subnet.id}). Merging...")
+                    # Transfer messages and analyses to the existing subnet
+                    db.query(Message).filter(Message.subnet_id == subnet.id).update({Message.subnet_id: conflicting_subnet.id})
+                    db.query(Analysis).filter(Analysis.subnet_id == subnet.id).update({Analysis.subnet_id: conflicting_subnet.id})
+                    db.delete(subnet)
+                    print(f"  🗑️ Deleted duplicate subnet ID {subnet.id}")
+                    updated += 1
+                    continue # Skip to next subnet, this one is gone
+
+            changed = False
+
+            if db_channel_id != new_cid:
+                print(f"🔄 [sync] SN{sn}: channel {db_channel_id} → {new_cid}  ({subnet.name} → {new_label})")
+                # Remove old JSON cache so next scan fetches from the new channel
+                old_cache = os.path.join(IMPORTS_DIR, f"{db_channel_id}.json")
+                if os.path.exists(old_cache):
+                    os.remove(old_cache)
+                    print(f"  🗑️  Removed stale cache: {old_cache}")
+                subnet.discord_url = new_url
+                changed = True
+
+            if subnet.name != new_label:
+                print(f"  ✏️  Renaming SN{sn}: '{subnet.name}' → '{new_label}'")
+                subnet.name = new_label
+                changed = True
+
+
+            if changed:
+                updated += 1
+
+        if updated:
+            db.commit()
+            print(f"✅ [sync] {updated} subnet(s) updated from channels.json")
+        else:
+            print("✅ [sync] DB is already in sync with channels.json")
+    except Exception as e:
+        db.rollback()
+        print(f"❌ [sync] Error during sync: {e}")
+    finally:
+        db.close()
+
+
 def start_watchdog():
+
     if not os.path.exists(IMPORTS_DIR):
         os.makedirs(IMPORTS_DIR)
         

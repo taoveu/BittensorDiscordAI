@@ -62,8 +62,8 @@ def run_scraper(manual_channel_id=None):
             print("Scraper Warning: No channels to process.")
             return
 
-        # Prepare default fallback date
-        default_after_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        # Prepare default fallback date (3 days to limit data volume on first scan)
+        default_after_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
 
         # Prepare output dirs
         TMP_DIR = os.path.join(EXPORTS_DIR, "tmp")
@@ -128,7 +128,7 @@ def run_scraper(manual_channel_id=None):
                     command,
                     capture_output=True,
                     text=True,
-                    timeout=300 # 5 minute timeout per channel safety
+                    timeout=600  # 10 min timeout – channels with large history can be slow
                 )
                 
                 if result.returncode != 0:

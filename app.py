@@ -9,7 +9,7 @@ import os
 
 from database import engine, Base, get_db, SessionLocal
 from models import Subnet, Analysis, GlobalConfig, Message
-from ingest import start_watchdog
+from ingest import start_watchdog, sync_channels_to_db
 from scraper import run_scraper
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI):
     import threading
     threading.Thread(target=run_scraper, daemon=True).start()
     
+    # 1b. Sync DB with channels.json (source of truth) before any scraping
+    sync_channels_to_db()
+
     # 2. Start the File Watchdog for new JSON ingestion
     observer = start_watchdog()
 
@@ -66,54 +69,59 @@ def get_channel_names():
     return {}
 
 def calculate_advanced_fear_index(latest, all_history):
+    # Guard: no score available → neutral index
+    if latest.sentiment_score is None:
+        return 50
+
     # Base math: LLM score (-1 to 1) mapped to 0-100
     base_mapped = ((latest.sentiment_score + 1.0) / 2.0) * 100
-    
+
     # 0. Activity Dampener (Absolute scale)
     # Penalize low-activity channels, pushing them towards 50 (Neutral)
     authors = latest.author_count or 0
     msgs = latest.message_count or 0
-    
+
     # Require at least 5 authors and 30 messages for 100% confidence
-    author_factor = min(1.0, authors / 5.0) 
+    author_factor = min(1.0, authors / 5.0)
     msg_factor = min(1.0, msgs / 30.0)
-    
+
     # The final dampener is the strictest of the two
     activity_dampener = min(author_factor, msg_factor)
-    
+
     # If we have no history to compare against, return the mapped AI sentiment DAMPENED
     if len(all_history) <= 1:
         dampened = 50 + ((base_mapped - 50) * activity_dampener)
         return int(max(0, min(100, dampened)))
-        
+
     # 1. Activity Momentum Calculation
     # How many messages in the current scrape vs the historical average?
     current_vol = msgs
-    
+
     # Consider the last 10 scrapes for the average
     recent_history = all_history[-11:-1]
     avg_vol = sum(a.message_count or 0 for a in recent_history) / len(recent_history) if recent_history else 0
-    
+
     if avg_vol == 0:
         if current_vol > 0:
-            momentum = 2.0 # Sudden spike from dead channel
+            momentum = 2.0  # Sudden spike from dead channel
         else:
-            momentum = 0.0 # Remains dead
+            momentum = 0.0  # Remains dead
     else:
         momentum = current_vol / avg_vol
-        
+
     # Cap the momentum multiplier at 2.5x to prevent extreme explosions
     momentum = min(momentum, 2.5)
-    
+
     # 2. Weighted Application
-    raw_sentiment = latest.sentiment_score
+    raw_sentiment = latest.sentiment_score  # guaranteed non-None here
     dynamic_swing = raw_sentiment * momentum * 50 * 0.75
-    
+
     # Apply the absolute activity dampener to the dynamic swing
     dynamic_swing = dynamic_swing * activity_dampener
-    
+
     final_index = 50 + dynamic_swing
     return int(max(0, min(100, final_index)))
+
 
 @app.get("/")
 def read_root(request: Request, db: Session = Depends(get_db)):
@@ -139,7 +147,8 @@ def read_root(request: Request, db: Session = Depends(get_db)):
         sparkline_data = [a.sentiment_score for a in analyses]
         
         # Determine sentiment tag (Bullish=green, Neutral=yellow, Alert=red)
-        score = latest_analysis.sentiment_score
+        # score can be None when the analysis was saved as a "scan timestamp only"
+        score = latest_analysis.sentiment_score if latest_analysis.sentiment_score is not None else 0.0
         if score >= 0.3:
             sentiment_color = "green"
             sentiment_label = "Bullish"
@@ -150,22 +159,25 @@ def read_root(request: Request, db: Session = Depends(get_db)):
             sentiment_color = "yellow"
             sentiment_label = "Neutral"
 
+
         # Calculate the Advanced Momentum-Weighted Fear Index
         fear_index = calculate_advanced_fear_index(latest_analysis, analyses)
 
-        display_name = latest_analysis.raw_json_file.replace('.json', '') if latest_analysis.raw_json_file else subnet.name
-        
-        # Apply friendly name mapped from configuration
+        # Resolve display name:
+        # 1. Start with the DB name as a meaningful fallback
+        # 2. Override with channels.json label if the channel_id is still mapped there
+        display_name = subnet.name
         channel_id = None
         default_order = 9999
         if subnet.discord_url and "/channels/" in subnet.discord_url:
             parts = subnet.discord_url.split("/")
             if len(parts) >= 2:
                 channel_id = parts[-1]
-                
+
         if channel_id and channel_id in channel_mappings:
             display_name = channel_mappings[channel_id]
             default_order = list(channel_mappings.keys()).index(channel_id)
+
 
         dashboard_data.append({
             "id": subnet.id,
