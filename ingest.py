@@ -332,6 +332,7 @@ def sync_channels_to_db():
 
     db = SessionLocal()
     updated = 0
+    seen_sns = set()
     try:
         subnets = db.query(Subnet).all()
         for subnet in subnets:
@@ -345,6 +346,8 @@ def sync_channels_to_db():
             if not m:
                 continue
             sn = int(m.group(1))
+            seen_sns.add(sn)
+
 
             if sn not in channels_by_sn:
                 continue  # Subnet not configured in channels.json — skip
@@ -384,6 +387,15 @@ def sync_channels_to_db():
 
 
             if changed:
+                updated += 1
+
+        # Add missing subnets from channels.json
+        for sn, (cid, label) in channels_by_sn.items():
+            if sn not in seen_sns:
+                print(f"➕ [sync] Adding missing SN{sn} from channels.json: {label}")
+                new_url = f"https://discord.com/channels/{guild_id}/{cid}"
+                new_subnet = Subnet(name=label, discord_url=new_url, is_scraping_enabled=False)
+                db.add(new_subnet)
                 updated += 1
 
         if updated:
