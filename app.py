@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import json
 import os
+from datetime import datetime
 
 from database import engine, Base, get_db, SessionLocal
 from models import Subnet, Analysis, GlobalConfig, Message
@@ -133,12 +134,43 @@ def read_root(request: Request, db: Session = Depends(get_db)):
     
     global_config = db.query(GlobalConfig).filter(GlobalConfig.key == "global_scrape_enabled").first()
     is_global_enabled = global_config.value == "True" if global_config else False
-
+    
     for subnet in subnets:
+
+        # Resolve display name and order first (so we can use them even without analyses)
+        display_name = subnet.name
+        channel_id = None
+        default_order = 9999
+        if subnet.discord_url and "/channels/" in subnet.discord_url:
+            parts = subnet.discord_url.split("/")
+            if len(parts) >= 2:
+                channel_id = parts[-1]
+
+        if channel_id and channel_id in channel_mappings:
+            display_name = channel_mappings[channel_id]
+            default_order = list(channel_mappings.keys()).index(channel_id)
+
         # Get all analyses sorted chronologically
         analyses = db.query(Analysis).filter(Analysis.subnet_id == subnet.id).order_by(Analysis.created_at.asc()).all()
         
         if not analyses:
+            # Subnet exists but has no analysis yet. Show it with placeholder data.
+            dashboard_data.append({
+                "id": subnet.id,
+                "name": display_name,
+                "discord_url": subnet.discord_url,
+                "sentiment_color": "gray",
+                "sentiment_label": "Inconnu",
+                "sentiment_score": 0.0,
+                "fear_index": 50,
+                "synthesis": "Aucune analyse disponible. Lancez un scan manuel.",
+                "sparkline": [],
+                "created_at": datetime(1970, 1, 1),
+                "default_order": default_order,
+                "message_count": 0,
+                "author_count": 0,
+                "is_scraping_enabled": subnet.is_scraping_enabled
+            })
             continue
             
         latest_analysis = analyses[-1]
@@ -159,25 +191,8 @@ def read_root(request: Request, db: Session = Depends(get_db)):
             sentiment_color = "yellow"
             sentiment_label = "Neutral"
 
-
         # Calculate the Advanced Momentum-Weighted Fear Index
         fear_index = calculate_advanced_fear_index(latest_analysis, analyses)
-
-        # Resolve display name:
-        # 1. Start with the DB name as a meaningful fallback
-        # 2. Override with channels.json label if the channel_id is still mapped there
-        display_name = subnet.name
-        channel_id = None
-        default_order = 9999
-        if subnet.discord_url and "/channels/" in subnet.discord_url:
-            parts = subnet.discord_url.split("/")
-            if len(parts) >= 2:
-                channel_id = parts[-1]
-
-        if channel_id and channel_id in channel_mappings:
-            display_name = channel_mappings[channel_id]
-            default_order = list(channel_mappings.keys()).index(channel_id)
-
 
         dashboard_data.append({
             "id": subnet.id,
@@ -196,7 +211,10 @@ def read_root(request: Request, db: Session = Depends(get_db)):
             "is_scraping_enabled": subnet.is_scraping_enabled
         })
 
+
+
     return templates.TemplateResponse("index.html", {
+
         "request": request,
         "subnets": dashboard_data,
         "global_scrape_enabled": is_global_enabled
