@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import json
 import os
+import re
 from datetime import datetime
 
 from database import engine, Base, get_db, SessionLocal
@@ -149,6 +150,11 @@ def read_root(request: Request, db: Session = Depends(get_db)):
         if channel_id and channel_id in channel_mappings:
             display_name = channel_mappings[channel_id]
             default_order = list(channel_mappings.keys()).index(channel_id)
+
+        # Ignore subnet 0 from dashboard display (subnets 1 to 128 only)
+        sn_match = re.search(r'\bsubnet\s+(\d+)\b', display_name, re.IGNORECASE)
+        if (sn_match and int(sn_match.group(1)) == 0) or "subnet 0" in display_name.lower() or "subnet 0" in (subnet.name or "").lower():
+            continue
 
         # Get all analyses sorted chronologically
         analyses = db.query(Analysis).filter(Analysis.subnet_id == subnet.id).order_by(Analysis.created_at.asc()).all()
